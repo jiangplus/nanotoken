@@ -68,6 +68,28 @@ contract NanoTokenTest is Test {
         assertEq(token.balanceOf(address(this)), 999_900 ether);
     }
 
+    function testBatchTransferWithData() public {
+        address[] memory tos = new address[](2);
+        uint256[] memory amounts = new uint256[](2);
+        uint256[] memory objectIds = new uint256[](2);
+        bytes[] memory objectDatas = new bytes[](2);
+
+        tos[0] = recipient;
+        tos[1] = allowedRecipient;
+        amounts[0] = 40 ether;
+        amounts[1] = 60 ether;
+        objectIds[0] = 101;
+        objectIds[1] = 202;
+        objectDatas[0] = hex"aaaa";
+        objectDatas[1] = hex"bbbb";
+
+        bool ok = token.batchTransferWithData(tos, amounts, objectIds, objectDatas);
+        assertTrue(ok);
+        assertEq(token.balanceOf(recipient), 40 ether);
+        assertEq(token.balanceOf(allowedRecipient), 60 ether);
+        assertEq(token.balanceOf(address(this)), 999_900 ether);
+    }
+
     function testTransferWithSig() public {
         token.transfer(signer, 100 ether);
         bytes memory objectData = hex"beef";
@@ -139,6 +161,34 @@ contract NanoTokenTest is Test {
         assertEq(token.balanceOf(recipient), 10 ether);
     }
 
+    function testSessionKeyCanBatchTransferForUser() public {
+        token.transfer(user, 100 ether);
+        vm.prank(user);
+        token.setSessionKey(sessionKey, true);
+
+        address[] memory tos = new address[](2);
+        uint256[] memory amounts = new uint256[](2);
+        uint256[] memory objectIds = new uint256[](2);
+        bytes[] memory objectDatas = new bytes[](2);
+
+        tos[0] = recipient;
+        tos[1] = allowedRecipient;
+        amounts[0] = 15 ether;
+        amounts[1] = 25 ether;
+        objectIds[0] = 1;
+        objectIds[1] = 2;
+        objectDatas[0] = hex"01";
+        objectDatas[1] = hex"02";
+
+        vm.prank(sessionKey);
+        bool ok = token.batchTransferFromSession(user, tos, amounts, objectIds, objectDatas);
+
+        assertTrue(ok);
+        assertEq(token.balanceOf(user), 60 ether);
+        assertEq(token.balanceOf(recipient), 15 ether);
+        assertEq(token.balanceOf(allowedRecipient), 25 ether);
+    }
+
     function testUnauthorizedSessionKeyCannotTransferForUser() public {
         token.transfer(user, 100 ether);
 
@@ -147,6 +197,24 @@ contract NanoTokenTest is Test {
             abi.encodeWithSelector(NanoToken.UnauthorizedSessionKey.selector, user, sessionKey)
         );
         token.transferFromSession(user, recipient, 10 ether, 77, hex"aa");
+    }
+
+    function testBatchTransferWithDataRejectsArrayLengthMismatch() public {
+        address[] memory tos = new address[](2);
+        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory objectIds = new uint256[](2);
+        bytes[] memory objectDatas = new bytes[](2);
+
+        tos[0] = recipient;
+        tos[1] = allowedRecipient;
+        amounts[0] = 1 ether;
+        objectIds[0] = 1;
+        objectIds[1] = 2;
+        objectDatas[0] = hex"01";
+        objectDatas[1] = hex"02";
+
+        vm.expectRevert(NanoToken.ArrayLengthMismatch.selector);
+        token.batchTransferWithData(tos, amounts, objectIds, objectDatas);
     }
 
     function testTransferWithSigAcceptsSessionKeySignature() public {

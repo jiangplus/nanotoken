@@ -29,6 +29,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     error ExpiredSignature(uint256 deadline);
     error InvalidSignature();
     error UnauthorizedSessionKey(address account, address sessionKey);
+    error ArrayLengthMismatch();
 
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
@@ -112,6 +113,20 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         return true;
     }
 
+    function batchTransferWithData(
+        address[] calldata to,
+        uint256[] calldata amount,
+        uint256[] calldata objectId,
+        bytes[] calldata objectData
+    ) external returns (bool) {
+        _validateBatchInputs(to.length, amount.length, objectId.length, objectData.length);
+        for (uint256 i = 0; i < to.length; i++) {
+            _transfer(msg.sender, to[i], amount[i]);
+            emit TransferWithData(msg.sender, to[i], amount[i], objectId[i], objectData[i]);
+        }
+        return true;
+    }
+
     function transferFromSession(
         address from,
         address to,
@@ -125,6 +140,25 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
 
         _transfer(from, to, amount);
         emit TransferWithData(from, to, amount, objectId, objectData);
+        return true;
+    }
+
+    function batchTransferFromSession(
+        address from,
+        address[] calldata to,
+        uint256[] calldata amount,
+        uint256[] calldata objectId,
+        bytes[] calldata objectData
+    ) external returns (bool) {
+        if (!sessionKeys[from][msg.sender]) {
+            revert UnauthorizedSessionKey(from, msg.sender);
+        }
+
+        _validateBatchInputs(to.length, amount.length, objectId.length, objectData.length);
+        for (uint256 i = 0; i < to.length; i++) {
+            _transfer(from, to[i], amount[i]);
+            emit TransferWithData(from, to[i], amount[i], objectId[i], objectData[i]);
+        }
         return true;
     }
 
@@ -183,5 +217,16 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
 
     function _isWhitelistExemptSender(address sender) internal view returns (bool) {
         return sender == owner() || whitelisted[sender];
+    }
+
+    function _validateBatchInputs(
+        uint256 toLength,
+        uint256 amountLength,
+        uint256 objectIdLength,
+        uint256 objectDataLength
+    ) internal pure {
+        if (toLength != amountLength || toLength != objectIdLength || toLength != objectDataLength) {
+            revert ArrayLengthMismatch();
+        }
     }
 }
