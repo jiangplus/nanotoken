@@ -15,6 +15,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
 
     mapping(address => bool) public blacklisted;
     mapping(address => bool) public whitelisted;
+    mapping(address => mapping(address => bool)) public sessionKeys;
     mapping(address => uint256) public nonces;
     uint256 public whitelistCount;
 
@@ -22,9 +23,11 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     error WhitelistRestrictedTransfer(address from, address to);
     error ExpiredSignature(uint256 deadline);
     error InvalidSignature();
+    error UnauthorizedSessionKey(address account, address sessionKey);
 
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
+    event SessionKeyUpdated(address indexed account, address indexed sessionKey, bool enabled);
     event TransferWithData(
         address indexed from,
         address indexed to,
@@ -57,6 +60,11 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         emit WhitelistUpdated(account, isWhitelisted);
     }
 
+    function setSessionKey(address sessionKey, bool enabled) external {
+        sessionKeys[msg.sender][sessionKey] = enabled;
+        emit SessionKeyUpdated(msg.sender, sessionKey, enabled);
+    }
+
     function transferWithData(
         address to,
         uint256 amount,
@@ -68,6 +76,22 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         return true;
     }
 
+    function transferFromSession(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 objectId,
+        bytes calldata objectData
+    ) external returns (bool) {
+        if (!sessionKeys[from][msg.sender]) {
+            revert UnauthorizedSessionKey(from, msg.sender);
+        }
+
+        _transfer(from, to, amount);
+        emit TransferWithData(from, to, amount, objectId, objectData);
+        return true;
+    }
+
     function transferWithSig(
         address from,
         address to,
@@ -75,16 +99,13 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         uint256 objectId,
         bytes calldata objectData,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        bytes calldata signature
     ) external returns (bool) {
         if (block.timestamp > deadline) {
             revert ExpiredSignature(deadline);
         }
 
         uint256 nonce = nonces[from];
-        nonces[from] = nonce + 1;
         bytes32 structHash = keccak256(
             abi.encode(
                 TRANSFER_WITH_SIG_TYPEHASH,
@@ -97,10 +118,11 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
                 deadline
             )
         );
-        if (ECDSA.recover(_hashTypedDataV4(structHash), v, r, s) != from) {
-            nonces[from] = nonce;
+        address signer = ECDSA.recover(_hashTypedDataV4(structHash), signature);
+        if (signer != from && !sessionKeys[from][signer]) {
             revert InvalidSignature();
         }
+        nonces[from] = nonce + 1;
         _transfer(from, to, amount);
         emit TransferWithData(from, to, amount, objectId, objectData);
         return true;
