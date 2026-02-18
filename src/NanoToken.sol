@@ -139,10 +139,13 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         nextMultiSigAccountId += 1;
 
         address[] storage ownerList = multiSigOwnerList[accountId];
-        for (uint256 i = 0; i < owners.length; i++) {
+        for (uint256 i = 0; i < owners.length;) {
             address owner = owners[i];
             multiSigOwners[accountId][owner] = true;
             ownerList.push(owner);
+            unchecked {
+                ++i;
+            }
         }
 
         multiSigThreshold[accountId] = threshold;
@@ -218,9 +221,12 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         bytes[] calldata objectData
     ) external returns (bool) {
         _validateBatchInputs(to.length, amount.length, objectId.length, objectData.length);
-        for (uint256 i = 0; i < to.length; i++) {
+        for (uint256 i = 0; i < to.length;) {
             _transfer(msg.sender, to[i], amount[i]);
             emit TransferWithData(msg.sender, to[i], amount[i], objectId[i], objectData[i]);
+            unchecked {
+                ++i;
+            }
         }
         return true;
     }
@@ -332,9 +338,12 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         }
 
         _validateBatchInputs(to.length, amount.length, objectId.length, objectData.length);
-        for (uint256 i = 0; i < to.length; i++) {
+        for (uint256 i = 0; i < to.length;) {
             _transfer(from, to[i], amount[i]);
             emit TransferWithData(from, to[i], amount[i], objectId[i], objectData[i]);
+            unchecked {
+                ++i;
+            }
         }
         return true;
     }
@@ -442,7 +451,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         uint256 approvedCount;
         address lastOwner;
 
-        for (uint256 i = 0; i < signatures.length; i++) {
+        for (uint256 i = 0; i < signatures.length;) {
             address signer = ECDSA.recover(digest, signatures[i]);
             address owner = _resolveMultiSigOwner(accountId, signer, owners);
             if (owner == address(0) || owner <= lastOwner) {
@@ -453,6 +462,9 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
             approvedCount += 1;
             if (approvedCount >= threshold) {
                 return;
+            }
+            unchecked {
+                ++i;
             }
         }
 
