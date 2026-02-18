@@ -16,12 +16,25 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         keccak256(
             "SetSessionKeyWithSig(address account,address sessionKey,bool enabled,uint256 nonce,uint256 deadline)"
         );
+    bytes32 private constant MULTISIG_TRANSFER_TYPEHASH =
+        keccak256(
+            "MultiSigTransfer(uint256 accountId,address to,uint256 amount,uint256 objectId,bytes objectData,uint256 nonce,uint256 deadline)"
+        );
+    bytes32 private constant MULTISIG_UPDATE_TYPEHASH =
+        keccak256(
+            "MultiSigUpdate(uint256 accountId,bytes32 ownersHash,uint256 threshold,uint256 nonce,uint256 deadline)"
+        );
 
     mapping(address => bool) public blacklisted;
     mapping(address => bool) public whitelisted;
     mapping(address => mapping(address => bool)) public sessionKeys;
     mapping(address => uint256) public nonces;
     mapping(address => uint256) public sessionKeyNonces;
+    mapping(uint256 => mapping(address => bool)) public multiSigOwners;
+    mapping(uint256 => address[]) private multiSigOwnerList;
+    mapping(uint256 => uint256) public multiSigThreshold;
+    mapping(uint256 => uint256) public multiSigNonces;
+    uint256 public nextMultiSigAccountId;
     uint256 public whitelistCount;
     bool private recoveryTransferActive;
 
@@ -31,11 +44,16 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     error InvalidSignature();
     error UnauthorizedSessionKey(address account, address sessionKey);
     error ArrayLengthMismatch();
+    error InvalidThreshold();
+    error MultiSigAccountNotFound(uint256 accountId);
+    error MultiSigInvalidSignatures();
 
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
     event SessionKeyUpdated(address indexed account, address indexed sessionKey, bool enabled);
     event AccountRecovered(address indexed oldAccount, address indexed newAccount, uint256 amount);
+    event MultiSigAccountCreated(uint256 indexed accountId, uint256 threshold);
+    event MultiSigAccountUpdated(uint256 indexed accountId, uint256 threshold);
     event TransferWithData(
         address indexed from,
         address indexed to,
@@ -46,6 +64,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
 
     constructor(uint256 initialSupply) ERC20("Nano Token", "NANO") Ownable(msg.sender) EIP712("Nano Token", "1") {
         _mint(msg.sender, initialSupply);
+        nextMultiSigAccountId = 1;
     }
 
     function setBlacklist(address account, bool isBlacklisted) external onlyOwner {
@@ -71,6 +90,34 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     function setSessionKey(address sessionKey, bool enabled) external {
         sessionKeys[msg.sender][sessionKey] = enabled;
         emit SessionKeyUpdated(msg.sender, sessionKey, enabled);
+    }
+
+    function createMultiSigAccount(address[] calldata owners, uint256 threshold) external returns (uint256 accountId) {
+        _validateOwnersAndThreshold(owners, threshold);
+
+        accountId = nextMultiSigAccountId;
+        nextMultiSigAccountId += 1;
+
+        address[] storage ownerList = multiSigOwnerList[accountId];
+        for (uint256 i = 0; i < owners.length; i++) {
+            address owner = owners[i];
+            if (multiSigOwners[accountId][owner]) {
+                revert MultiSigInvalidSignatures();
+            }
+            multiSigOwners[accountId][owner] = true;
+            ownerList.push(owner);
+        }
+
+        multiSigThreshold[accountId] = threshold;
+        emit MultiSigAccountCreated(accountId, threshold);
+    }
+
+    function multiSigAccountAddress(uint256 accountId) public pure returns (address) {
+        return address(uint160(accountId));
+    }
+
+    function getMultiSigOwners(uint256 accountId) external view returns (address[] memory) {
+        return multiSigOwnerList[accountId];
     }
 
     function recoverAccount(address oldAccount, address newAccount) external onlyOwner returns (uint256 amount) {
@@ -155,6 +202,88 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         _transfer(from, to, amount);
         emit TransferWithData(from, to, amount, objectId, objectData);
         return true;
+    }
+
+    function transferFromMultiSig(
+        uint256 accountId,
+        address to,
+        uint256 amount,
+        uint256 objectId,
+        bytes calldata objectData,
+        uint256 deadline,
+        bytes[] calldata signatures
+    ) external returns (bool) {
+        _requireMultiSigAccountExists(accountId);
+        if (block.timestamp > deadline) {
+            revert ExpiredSignature(deadline);
+        }
+
+        uint256 nonce = multiSigNonces[accountId];
+        bytes32 structHash = keccak256(
+            abi.encode(
+                MULTISIG_TRANSFER_TYPEHASH,
+                accountId,
+                to,
+                amount,
+                objectId,
+                keccak256(objectData),
+                nonce,
+                deadline
+            )
+        );
+        _validateMultiSigApprovals(accountId, _hashTypedDataV4(structHash), signatures);
+        multiSigNonces[accountId] = nonce + 1;
+
+        address from = multiSigAccountAddress(accountId);
+        _transfer(from, to, amount);
+        emit TransferWithData(from, to, amount, objectId, objectData);
+        return true;
+    }
+
+    function updateMultiSigAccount(
+        uint256 accountId,
+        address[] calldata newOwners,
+        uint256 newThreshold,
+        uint256 deadline,
+        bytes[] calldata signatures
+    ) external {
+        _requireMultiSigAccountExists(accountId);
+        _validateOwnersAndThreshold(newOwners, newThreshold);
+        if (block.timestamp > deadline) {
+            revert ExpiredSignature(deadline);
+        }
+
+        uint256 nonce = multiSigNonces[accountId];
+        bytes32 structHash = keccak256(
+            abi.encode(
+                MULTISIG_UPDATE_TYPEHASH,
+                accountId,
+                keccak256(abi.encodePacked(newOwners)),
+                newThreshold,
+                nonce,
+                deadline
+            )
+        );
+        _validateMultiSigApprovals(accountId, _hashTypedDataV4(structHash), signatures);
+        multiSigNonces[accountId] = nonce + 1;
+
+        address[] storage ownerList = multiSigOwnerList[accountId];
+        for (uint256 i = 0; i < ownerList.length; i++) {
+            multiSigOwners[accountId][ownerList[i]] = false;
+        }
+        delete multiSigOwnerList[accountId];
+
+        address[] storage newOwnerList = multiSigOwnerList[accountId];
+        for (uint256 i = 0; i < newOwners.length; i++) {
+            address owner = newOwners[i];
+            if (multiSigOwners[accountId][owner]) {
+                revert MultiSigInvalidSignatures();
+            }
+            multiSigOwners[accountId][owner] = true;
+            newOwnerList.push(owner);
+        }
+        multiSigThreshold[accountId] = newThreshold;
+        emit MultiSigAccountUpdated(accountId, newThreshold);
     }
 
     function batchTransferFromSession(
@@ -244,5 +373,75 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         if (toLength != amountLength || toLength != objectIdLength || toLength != objectDataLength) {
             revert ArrayLengthMismatch();
         }
+    }
+
+    function _requireMultiSigAccountExists(uint256 accountId) internal view {
+        if (accountId == 0 || accountId >= nextMultiSigAccountId) {
+            revert MultiSigAccountNotFound(accountId);
+        }
+    }
+
+    function _validateOwnersAndThreshold(address[] calldata owners, uint256 threshold) internal pure {
+        if (owners.length == 0 || threshold == 0 || threshold > owners.length) {
+            revert InvalidThreshold();
+        }
+    }
+
+    function _validateMultiSigApprovals(
+        uint256 accountId,
+        bytes32 digest,
+        bytes[] calldata signatures
+    ) internal view {
+        uint256 threshold = multiSigThreshold[accountId];
+        if (signatures.length < threshold) {
+            revert MultiSigInvalidSignatures();
+        }
+
+        address[] storage owners = multiSigOwnerList[accountId];
+        address[] memory approvedOwners = new address[](owners.length);
+        uint256 approvedCount;
+
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address signer = ECDSA.recover(digest, signatures[i]);
+            address owner = _resolveMultiSigOwner(accountId, signer, owners);
+            if (owner == address(0) || _containsOwner(approvedOwners, approvedCount, owner)) {
+                continue;
+            }
+
+            approvedOwners[approvedCount] = owner;
+            approvedCount += 1;
+            if (approvedCount >= threshold) {
+                return;
+            }
+        }
+
+        revert MultiSigInvalidSignatures();
+    }
+
+    function _resolveMultiSigOwner(
+        uint256 accountId,
+        address signer,
+        address[] storage owners
+    ) internal view returns (address) {
+        if (multiSigOwners[accountId][signer]) {
+            return signer;
+        }
+
+        for (uint256 i = 0; i < owners.length; i++) {
+            address owner = owners[i];
+            if (sessionKeys[owner][signer]) {
+                return owner;
+            }
+        }
+        return address(0);
+    }
+
+    function _containsOwner(address[] memory owners, uint256 length, address owner) internal pure returns (bool) {
+        for (uint256 i = 0; i < length; i++) {
+            if (owners[i] == owner) {
+                return true;
+            }
+        }
+        return false;
     }
 }

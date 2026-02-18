@@ -13,6 +13,14 @@ contract NanoTokenTest is Test {
         keccak256(
             "SetSessionKeyWithSig(address account,address sessionKey,bool enabled,uint256 nonce,uint256 deadline)"
         );
+    bytes32 internal constant MULTISIG_TRANSFER_TYPEHASH =
+        keccak256(
+            "MultiSigTransfer(uint256 accountId,address to,uint256 amount,uint256 objectId,bytes objectData,uint256 nonce,uint256 deadline)"
+        );
+    bytes32 internal constant MULTISIG_UPDATE_TYPEHASH =
+        keccak256(
+            "MultiSigUpdate(uint256 accountId,bytes32 ownersHash,uint256 threshold,uint256 nonce,uint256 deadline)"
+        );
 
     event TransferWithData(
         address indexed from,
@@ -30,6 +38,14 @@ contract NanoTokenTest is Test {
     address internal signer;
     uint256 internal sessionPk;
     address internal sessionKey;
+    uint256 internal owner1Pk;
+    uint256 internal owner2Pk;
+    uint256 internal owner3Pk;
+    address internal owner1;
+    address internal owner2;
+    address internal owner3;
+    uint256 internal owner1SessionPk;
+    address internal owner1SessionKey;
 
     function setUp() public {
         token = new NanoToken(1_000_000 ether);
@@ -37,6 +53,14 @@ contract NanoTokenTest is Test {
         signer = vm.addr(signerPk);
         sessionPk = 0xB0B;
         sessionKey = vm.addr(sessionPk);
+        owner1Pk = 0x1001;
+        owner2Pk = 0x1002;
+        owner3Pk = 0x1003;
+        owner1 = vm.addr(owner1Pk);
+        owner2 = vm.addr(owner2Pk);
+        owner3 = vm.addr(owner3Pk);
+        owner1SessionPk = 0x2001;
+        owner1SessionKey = vm.addr(owner1SessionPk);
     }
 
     function testInitialSupplyMintedToDeployer() public view {
@@ -106,6 +130,85 @@ contract NanoTokenTest is Test {
         assertEq(token.balanceOf(signer), 90 ether);
         assertEq(token.balanceOf(recipient), 10 ether);
         assertEq(token.nonces(signer), nonce + 1);
+    }
+
+    function testCreateAndTransferFromMultiSig() public {
+        address[] memory owners = new address[](3);
+        owners[0] = owner1;
+        owners[1] = owner2;
+        owners[2] = owner3;
+        uint256 accountId = token.createMultiSigAccount(owners, 2);
+        address msAccount = token.multiSigAccountAddress(accountId);
+        token.transfer(msAccount, 100 ether);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.multiSigNonces(accountId);
+        bytes memory objectData = hex"aa";
+        bytes32 digest = _multiSigTransferDigest(
+            accountId, recipient, 10 ether, 9, objectData, nonce, deadline
+        );
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = _sign(owner1Pk, digest);
+        signatures[1] = _sign(owner2Pk, digest);
+
+        bool ok =
+            token.transferFromMultiSig(accountId, recipient, 10 ether, 9, objectData, deadline, signatures);
+
+        assertTrue(ok);
+        assertEq(token.balanceOf(msAccount), 90 ether);
+        assertEq(token.balanceOf(recipient), 10 ether);
+    }
+
+    function testMultiSigTransferAcceptsSessionKeySignatures() public {
+        address[] memory owners = new address[](2);
+        owners[0] = owner1;
+        owners[1] = owner2;
+        uint256 accountId = token.createMultiSigAccount(owners, 2);
+        address msAccount = token.multiSigAccountAddress(accountId);
+        token.transfer(msAccount, 100 ether);
+
+        vm.prank(owner1);
+        token.setSessionKey(owner1SessionKey, true);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.multiSigNonces(accountId);
+        bytes memory objectData = hex"bb";
+        bytes32 digest = _multiSigTransferDigest(
+            accountId, recipient, 20 ether, 10, objectData, nonce, deadline
+        );
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = _sign(owner1SessionPk, digest);
+        signatures[1] = _sign(owner2Pk, digest);
+
+        token.transferFromMultiSig(accountId, recipient, 20 ether, 10, objectData, deadline, signatures);
+        assertEq(token.balanceOf(msAccount), 80 ether);
+        assertEq(token.balanceOf(recipient), 20 ether);
+    }
+
+    function testUpdateMultiSigAccountWithThresholdSignatures() public {
+        address[] memory owners = new address[](3);
+        owners[0] = owner1;
+        owners[1] = owner2;
+        owners[2] = owner3;
+        uint256 accountId = token.createMultiSigAccount(owners, 2);
+
+        address[] memory newOwners = new address[](2);
+        newOwners[0] = owner1;
+        newOwners[1] = owner3;
+
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.multiSigNonces(accountId);
+        bytes32 digest = _multiSigUpdateDigest(accountId, newOwners, 1, nonce, deadline);
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = _sign(owner1Pk, digest);
+        signatures[1] = _sign(owner2Pk, digest);
+
+        token.updateMultiSigAccount(accountId, newOwners, 1, deadline, signatures);
+
+        assertEq(token.multiSigThreshold(accountId), 1);
+        assertTrue(token.multiSigOwners(accountId, owner1));
+        assertFalse(token.multiSigOwners(accountId, owner2));
+        assertTrue(token.multiSigOwners(accountId, owner3));
     }
 
     function testTransferWithSigRejectsReplay() public {
@@ -474,5 +577,69 @@ contract NanoTokenTest is Test {
         );
 
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+
+    function _multiSigTransferDigest(
+        uint256 accountId,
+        address to,
+        uint256 amount,
+        uint256 objectId,
+        bytes memory objectData,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                MULTISIG_TRANSFER_TYPEHASH,
+                accountId,
+                to,
+                amount,
+                objectId,
+                keccak256(objectData),
+                nonce,
+                deadline
+            )
+        );
+        return _typedDataDigest(structHash);
+    }
+
+    function _multiSigUpdateDigest(
+        uint256 accountId,
+        address[] memory owners,
+        uint256 threshold,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                MULTISIG_UPDATE_TYPEHASH,
+                accountId,
+                keccak256(abi.encodePacked(owners)),
+                threshold,
+                nonce,
+                deadline
+            )
+        );
+        return _typedDataDigest(structHash);
+    }
+
+    function _typedDataDigest(bytes32 structHash) internal view returns (bytes32) {
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
+                keccak256(bytes("Nano Token")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(token)
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+
+    function _sign(uint256 pk, bytes32 digest) internal returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
     }
 }
