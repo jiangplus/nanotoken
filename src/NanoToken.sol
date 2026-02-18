@@ -47,6 +47,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     error UnauthorizedSessionKey(address account, address sessionKey);
     error ArrayLengthMismatch();
     error InvalidThreshold();
+    error InvalidMultiSigOwner(address owner);
     error MultiSigAccountNotFound(uint256 accountId);
     error MultiSigInvalidSignatures();
     error InsufficientMinterCredit(address minter, uint256 available, uint256 requested);
@@ -140,9 +141,6 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         address[] storage ownerList = multiSigOwnerList[accountId];
         for (uint256 i = 0; i < owners.length; i++) {
             address owner = owners[i];
-            if (multiSigOwners[accountId][owner]) {
-                revert MultiSigInvalidSignatures();
-            }
             multiSigOwners[accountId][owner] = true;
             ownerList.push(owner);
         }
@@ -315,9 +313,6 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         address[] storage newOwnerList = multiSigOwnerList[accountId];
         for (uint256 i = 0; i < newOwners.length; i++) {
             address owner = newOwners[i];
-            if (multiSigOwners[accountId][owner]) {
-                revert MultiSigInvalidSignatures();
-            }
             multiSigOwners[accountId][owner] = true;
             newOwnerList.push(owner);
         }
@@ -400,7 +395,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     }
 
     function _isWhitelistExemptSender(address sender) internal view returns (bool) {
-        return sender == owner() || whitelisted[sender];
+        return sender == owner() || sender == address(this) || whitelisted[sender];
     }
 
     function _validateBatchInputs(
@@ -423,6 +418,13 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     function _validateOwnersAndThreshold(address[] calldata owners, uint256 threshold) internal pure {
         if (owners.length == 0 || threshold == 0 || threshold > owners.length) {
             revert InvalidThreshold();
+        }
+
+        for (uint256 i = 0; i < owners.length; i++) {
+            address owner = owners[i];
+            if (owner == address(0)) {
+                revert InvalidMultiSigOwner(owner);
+            }
         }
     }
 

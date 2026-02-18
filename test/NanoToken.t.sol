@@ -235,6 +235,25 @@ contract NanoTokenTest is Test {
         assertEq(token.balanceOf(recipient), 10 ether);
     }
 
+    function testCreateMultiSigRejectsZeroOwner() public {
+        address[] memory owners = new address[](2);
+        owners[0] = owner1;
+        owners[1] = address(0);
+
+        vm.expectRevert(abi.encodeWithSelector(NanoToken.InvalidMultiSigOwner.selector, address(0)));
+        token.createMultiSigAccount(owners, 2);
+    }
+
+    function testCreateMultiSigAllowsDuplicateOwner() public {
+        address[] memory owners = new address[](2);
+        owners[0] = owner1;
+        owners[1] = owner1;
+
+        uint256 accountId = token.createMultiSigAccount(owners, 2);
+        assertEq(token.multiSigThreshold(accountId), 2);
+        assertTrue(token.multiSigOwners(accountId, owner1));
+    }
+
     function testMultiSigTransferAcceptsSessionKeySignatures() public {
         address[] memory owners = new address[](2);
         owners[0] = owner1;

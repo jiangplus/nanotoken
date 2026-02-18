@@ -116,4 +116,18 @@ contract FlowableNanoTokenTest is Test {
         assertTrue(ok);
         assertEq(token.balanceOf(recipient), 3 ether);
     }
+
+    function testWithdrawWorksWhenWhitelistModeIsActive() public {
+        token.setWhitelist(sender, true);
+
+        vm.prank(sender);
+        uint256 flowId = token.createFlow(recipient, 1 ether, 0, 100 ether);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(recipient);
+        uint256 withdrawn = token.withdrawMaxFlow(flowId, recipient);
+
+        assertEq(withdrawn, 10 ether);
+        assertEq(token.balanceOf(recipient), 10 ether);
+    }
 }
