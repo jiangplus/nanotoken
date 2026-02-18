@@ -72,6 +72,52 @@ contract NanoTokenTest is Test {
         assertEq(token.owner(), address(this));
     }
 
+    function testOwnerCanMintDirectly() public {
+        token.mint(recipient, 50 ether);
+
+        assertEq(token.balanceOf(recipient), 50 ether);
+        assertEq(token.totalSupply(), 1_000_050 ether);
+    }
+
+    function testOwnerCanSetMinterCreditAndMinterCanMint() public {
+        token.setMinterCredit(user, 100 ether);
+
+        vm.prank(user);
+        bool ok = token.mintByMinter(recipient, 25 ether);
+
+        assertTrue(ok);
+        assertEq(token.balanceOf(recipient), 25 ether);
+        assertEq(token.totalSupply(), 1_000_025 ether);
+        assertEq(token.minterCredits(user), 75 ether);
+    }
+
+    function testMinterCannotExceedCredit() public {
+        token.setMinterCredit(user, 10 ether);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NanoToken.InsufficientMinterCredit.selector, user, 10 ether, 11 ether
+            )
+        );
+        token.mintByMinter(recipient, 11 ether);
+    }
+
+    function testNonOwnerCannotSetMinterCredit() public {
+        vm.prank(user);
+        vm.expectRevert();
+        token.setMinterCredit(user, 100 ether);
+    }
+
+    function testOwnerCanAdjustMinterCredit() public {
+        token.setMinterCredit(user, 100 ether);
+        token.setMinterCredit(user, 40 ether);
+
+        vm.prank(user);
+        token.mintByMinter(recipient, 40 ether);
+        assertEq(token.minterCredits(user), 0);
+    }
+
     function testTransfer() public {
         token.transfer(recipient, 100 ether);
 

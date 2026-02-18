@@ -28,6 +28,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     mapping(address => bool) public blacklisted;
     mapping(address => bool) public whitelisted;
     mapping(address => mapping(address => bool)) public sessionKeys;
+    mapping(address => uint256) public minterCredits;
     mapping(address => uint256) public nonces;
     mapping(address => uint256) public sessionKeyNonces;
     mapping(uint256 => mapping(address => bool)) public multiSigOwners;
@@ -47,10 +48,13 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     error InvalidThreshold();
     error MultiSigAccountNotFound(uint256 accountId);
     error MultiSigInvalidSignatures();
+    error InsufficientMinterCredit(address minter, uint256 available, uint256 requested);
 
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
     event SessionKeyUpdated(address indexed account, address indexed sessionKey, bool enabled);
+    event MinterCreditUpdated(address indexed minter, uint256 credit);
+    event MinterMinted(address indexed minter, address indexed to, uint256 amount);
     event AccountRecovered(address indexed oldAccount, address indexed newAccount, uint256 amount);
     event MultiSigAccountCreated(uint256 indexed accountId, uint256 threshold);
     event MultiSigAccountUpdated(uint256 indexed accountId, uint256 threshold);
@@ -90,6 +94,27 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     function setSessionKey(address sessionKey, bool enabled) external {
         sessionKeys[msg.sender][sessionKey] = enabled;
         emit SessionKeyUpdated(msg.sender, sessionKey, enabled);
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+
+    function setMinterCredit(address minter, uint256 credit) external onlyOwner {
+        minterCredits[minter] = credit;
+        emit MinterCreditUpdated(minter, credit);
+    }
+
+    function mintByMinter(address to, uint256 amount) external returns (bool) {
+        uint256 credit = minterCredits[msg.sender];
+        if (credit < amount) {
+            revert InsufficientMinterCredit(msg.sender, credit, amount);
+        }
+
+        minterCredits[msg.sender] = credit - amount;
+        _mint(to, amount);
+        emit MinterMinted(msg.sender, to, amount);
+        return true;
     }
 
     function createMultiSigAccount(address[] calldata owners, uint256 threshold) external returns (uint256 accountId) {
