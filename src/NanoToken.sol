@@ -23,6 +23,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     mapping(address => uint256) public nonces;
     mapping(address => uint256) public sessionKeyNonces;
     uint256 public whitelistCount;
+    bool private recoveryTransferActive;
 
     error BlacklistedAddress(address account);
     error WhitelistRestrictedTransfer(address from, address to);
@@ -34,6 +35,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
     event SessionKeyUpdated(address indexed account, address indexed sessionKey, bool enabled);
+    event AccountRecovered(address indexed oldAccount, address indexed newAccount, uint256 amount);
     event TransferWithData(
         address indexed from,
         address indexed to,
@@ -69,6 +71,18 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     function setSessionKey(address sessionKey, bool enabled) external {
         sessionKeys[msg.sender][sessionKey] = enabled;
         emit SessionKeyUpdated(msg.sender, sessionKey, enabled);
+    }
+
+    function recoverAccount(address oldAccount, address newAccount) external onlyOwner returns (uint256 amount) {
+        amount = balanceOf(oldAccount);
+        if (amount == 0 || oldAccount == newAccount) {
+            return amount;
+        }
+
+        recoveryTransferActive = true;
+        _transfer(oldAccount, newAccount, amount);
+        recoveryTransferActive = false;
+        emit AccountRecovered(oldAccount, newAccount, amount);
     }
 
     function setSessionKeyWithSig(
@@ -199,16 +213,18 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     }
 
     function _update(address from, address to, uint256 value) internal virtual override {
-        if (from != address(0) && blacklisted[from]) {
-            revert BlacklistedAddress(from);
-        }
-        if (to != address(0) && blacklisted[to]) {
-            revert BlacklistedAddress(to);
-        }
+        if (!recoveryTransferActive) {
+            if (from != address(0) && blacklisted[from]) {
+                revert BlacklistedAddress(from);
+            }
+            if (to != address(0) && blacklisted[to]) {
+                revert BlacklistedAddress(to);
+            }
 
-        if (from != address(0) && whitelistCount > 0 && !_isWhitelistExemptSender(from)) {
-            if (to != address(0) && !whitelisted[to]) {
-                revert WhitelistRestrictedTransfer(from, to);
+            if (from != address(0) && whitelistCount > 0 && !_isWhitelistExemptSender(from)) {
+                if (to != address(0) && !whitelisted[to]) {
+                    revert WhitelistRestrictedTransfer(from, to);
+                }
             }
         }
 

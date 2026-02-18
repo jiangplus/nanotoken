@@ -275,6 +275,33 @@ contract NanoTokenTest is Test {
         token.setSessionKeyWithSig(signer, sessionKey, true, deadline, sig);
     }
 
+    function testOwnerCanRecoverAccount() public {
+        token.transfer(user, 100 ether);
+
+        uint256 moved = token.recoverAccount(user, recipient);
+
+        assertEq(moved, 100 ether);
+        assertEq(token.balanceOf(user), 0);
+        assertEq(token.balanceOf(recipient), 100 ether);
+    }
+
+    function testNonOwnerCannotRecoverAccount() public {
+        vm.prank(user);
+        vm.expectRevert();
+        token.recoverAccount(signer, recipient);
+    }
+
+    function testOwnerCanRecoverBlacklistedAccount() public {
+        token.transfer(user, 100 ether);
+        token.setBlacklist(user, true);
+
+        uint256 moved = token.recoverAccount(user, recipient);
+
+        assertEq(moved, 100 ether);
+        assertEq(token.balanceOf(user), 0);
+        assertEq(token.balanceOf(recipient), 100 ether);
+    }
+
     function testOwnerCanSetAndUnsetBlacklist() public {
         token.setBlacklist(user, true);
         assertTrue(token.blacklisted(user));
