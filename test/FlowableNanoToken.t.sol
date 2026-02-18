@@ -5,6 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {FlowableNanoToken} from "src/FlowableNanoToken.sol";
 
 contract FlowableNanoTokenTest is Test {
+    string internal constant TOKEN_NAME = "Nano Token";
+    string internal constant TOKEN_SYMBOL = "NANO";
+    uint8 internal constant TOKEN_DECIMALS = 18;
+
     FlowableNanoToken internal token;
 
     address internal sender = address(0xA11CE);
@@ -12,7 +16,8 @@ contract FlowableNanoTokenTest is Test {
     address internal thirdParty = address(0xCAFE);
 
     function setUp() public {
-        token = new FlowableNanoToken(1_000_000 ether);
+        token =
+            new FlowableNanoToken(address(this), TOKEN_NAME, TOKEN_SYMBOL, TOKEN_DECIMALS, 1_000_000 ether);
         token.transfer(sender, 1_000 ether);
     }
 

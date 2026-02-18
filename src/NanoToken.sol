@@ -39,6 +39,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     uint256 public maxSupply;
     uint256 public whitelistCount;
     bool private recoveryTransferActive;
+    uint8 private immutable tokenDecimals;
 
     error BlacklistedAddress(address account);
     error WhitelistRestrictedTransfer(address from, address to);
@@ -71,10 +72,21 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         bytes objectData
     );
 
-    constructor(uint256 initialSupply) ERC20("Nano Token", "NANO") Ownable(msg.sender) EIP712("Nano Token", "1") {
+    constructor(
+        address initialOwner,
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_,
+        uint256 initialSupply
+    ) ERC20(name_, symbol_) Ownable(initialOwner) EIP712(name_, "1") {
+        tokenDecimals = decimals_;
         maxSupply = initialSupply;
-        _mint(msg.sender, initialSupply);
+        _mint(initialOwner, initialSupply);
         nextMultiSigAccountId = 1;
+    }
+
+    function decimals() public view virtual override returns (uint8) {
+        return tokenDecimals;
     }
 
     function setBlacklist(address account, bool isBlacklisted) external onlyOwner {

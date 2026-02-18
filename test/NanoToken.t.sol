@@ -5,6 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {NanoToken} from "src/NanoToken.sol";
 
 contract NanoTokenTest is Test {
+    string internal constant TOKEN_NAME = "Nano Token";
+    string internal constant TOKEN_SYMBOL = "NANO";
+    uint8 internal constant TOKEN_DECIMALS = 18;
     bytes32 internal constant TRANSFER_WITH_SIG_TYPEHASH =
         keccak256(
             "TransferWithSig(address from,address to,uint256 amount,uint256 objectId,bytes objectData,uint256 nonce,uint256 deadline)"
@@ -48,7 +51,7 @@ contract NanoTokenTest is Test {
     address internal owner1SessionKey;
 
     function setUp() public {
-        token = new NanoToken(1_000_000 ether);
+        token = new NanoToken(address(this), TOKEN_NAME, TOKEN_SYMBOL, TOKEN_DECIMALS, 1_000_000 ether);
         signerPk = 0xA11CE;
         signer = vm.addr(signerPk);
         sessionPk = 0xB0B;
@@ -631,7 +634,7 @@ contract NanoTokenTest is Test {
                 keccak256(
                     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
                 ),
-                keccak256(bytes("Nano Token")),
+                keccak256(bytes(TOKEN_NAME)),
                 keccak256(bytes("1")),
                 block.chainid,
                 address(token)
@@ -664,7 +667,7 @@ contract NanoTokenTest is Test {
                 keccak256(
                     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
                 ),
-                keccak256(bytes("Nano Token")),
+                keccak256(bytes(TOKEN_NAME)),
                 keccak256(bytes("1")),
                 block.chainid,
                 address(token)
@@ -724,7 +727,7 @@ contract NanoTokenTest is Test {
                 keccak256(
                     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
                 ),
-                keccak256(bytes("Nano Token")),
+                keccak256(bytes(TOKEN_NAME)),
                 keccak256(bytes("1")),
                 block.chainid,
                 address(token)

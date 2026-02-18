@@ -43,7 +43,13 @@ contract FlowableNanoToken is NanoToken {
     event FlowResumed(uint256 indexed flowId);
     event FlowVoided(uint256 indexed flowId, address indexed caller);
 
-    constructor(uint256 initialSupply) NanoToken(initialSupply) {
+    constructor(
+        address initialOwner,
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_,
+        uint256 initialSupply
+    ) NanoToken(initialOwner, name_, symbol_, decimals_, initialSupply) {
         nextFlowId = 1;
     }
 
