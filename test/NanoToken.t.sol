@@ -16,6 +16,10 @@ contract NanoTokenTest is Test {
         assertEq(token.balanceOf(address(this)), 1_000_000 ether);
     }
 
+    function testOwnerIsCreator() public view {
+        assertEq(token.owner(), address(this));
+    }
+
     function testTransfer() public {
         address recipient = address(0xBEEF);
 
