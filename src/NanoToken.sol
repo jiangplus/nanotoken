@@ -12,11 +12,16 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         keccak256(
             "TransferWithSig(address from,address to,uint256 amount,uint256 objectId,bytes objectData,uint256 nonce,uint256 deadline)"
         );
+    bytes32 private constant SET_SESSION_KEY_WITH_SIG_TYPEHASH =
+        keccak256(
+            "SetSessionKeyWithSig(address account,address sessionKey,bool enabled,uint256 nonce,uint256 deadline)"
+        );
 
     mapping(address => bool) public blacklisted;
     mapping(address => bool) public whitelisted;
     mapping(address => mapping(address => bool)) public sessionKeys;
     mapping(address => uint256) public nonces;
+    mapping(address => uint256) public sessionKeyNonces;
     uint256 public whitelistCount;
 
     error BlacklistedAddress(address account);
@@ -63,6 +68,37 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     function setSessionKey(address sessionKey, bool enabled) external {
         sessionKeys[msg.sender][sessionKey] = enabled;
         emit SessionKeyUpdated(msg.sender, sessionKey, enabled);
+    }
+
+    function setSessionKeyWithSig(
+        address account,
+        address sessionKey,
+        bool enabled,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        if (block.timestamp > deadline) {
+            revert ExpiredSignature(deadline);
+        }
+
+        uint256 nonce = sessionKeyNonces[account];
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SET_SESSION_KEY_WITH_SIG_TYPEHASH,
+                account,
+                sessionKey,
+                enabled,
+                nonce,
+                deadline
+            )
+        );
+        if (ECDSA.recover(_hashTypedDataV4(structHash), signature) != account) {
+            revert InvalidSignature();
+        }
+
+        sessionKeyNonces[account] = nonce + 1;
+        sessionKeys[account][sessionKey] = enabled;
+        emit SessionKeyUpdated(account, sessionKey, enabled);
     }
 
     function transferWithData(

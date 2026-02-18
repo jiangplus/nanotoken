@@ -9,6 +9,10 @@ contract NanoTokenTest is Test {
         keccak256(
             "TransferWithSig(address from,address to,uint256 amount,uint256 objectId,bytes objectData,uint256 nonce,uint256 deadline)"
         );
+    bytes32 internal constant SET_SESSION_KEY_WITH_SIG_TYPEHASH =
+        keccak256(
+            "SetSessionKeyWithSig(address account,address sessionKey,bool enabled,uint256 nonce,uint256 deadline)"
+        );
 
     event TransferWithData(
         address indexed from,
@@ -165,6 +169,44 @@ contract NanoTokenTest is Test {
         assertEq(token.nonces(user), nonce + 1);
     }
 
+    function testSetSessionKeyWithSig() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.sessionKeyNonces(signer);
+        bytes32 digest = _setSessionKeyWithSigDigest(signer, sessionKey, true, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        token.setSessionKeyWithSig(signer, sessionKey, true, deadline, sig);
+
+        assertTrue(token.sessionKeys(signer, sessionKey));
+        assertEq(token.sessionKeyNonces(signer), nonce + 1);
+    }
+
+    function testSetSessionKeyWithSigRejectsReplay() public {
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.sessionKeyNonces(signer);
+        bytes32 digest = _setSessionKeyWithSigDigest(signer, sessionKey, true, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        token.setSessionKeyWithSig(signer, sessionKey, true, deadline, sig);
+
+        vm.expectRevert(NanoToken.InvalidSignature.selector);
+        token.setSessionKeyWithSig(signer, sessionKey, true, deadline, sig);
+    }
+
+    function testSetSessionKeyWithSigRejectsExpiredSignature() public {
+        uint256 deadline = block.timestamp + 1;
+        uint256 nonce = token.sessionKeyNonces(signer);
+        bytes32 digest = _setSessionKeyWithSigDigest(signer, sessionKey, true, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+        vm.warp(deadline + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(NanoToken.ExpiredSignature.selector, deadline));
+        token.setSessionKeyWithSig(signer, sessionKey, true, deadline, sig);
+    }
+
     function testOwnerCanSetAndUnsetBlacklist() public {
         token.setBlacklist(user, true);
         assertTrue(token.blacklisted(user));
@@ -286,6 +328,39 @@ contract NanoTokenTest is Test {
                 amount,
                 objectId,
                 keccak256(objectData),
+                nonce,
+                deadline
+            )
+        );
+
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
+                keccak256(bytes("Nano Token")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(token)
+            )
+        );
+
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+
+    function _setSessionKeyWithSigDigest(
+        address account,
+        address key,
+        bool enabled,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SET_SESSION_KEY_WITH_SIG_TYPEHASH,
+                account,
+                key,
+                enabled,
                 nonce,
                 deadline
             )
