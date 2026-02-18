@@ -9,6 +9,11 @@ JavaScript SDK for interacting with:
 - `NanoTokenWrapper`
 
 It supports calling **all functions** through generic `read`, `write`, `simulate`, and `estimateGas` methods.
+It also includes high-level helpers for:
+
+- EIP-712 signature-based transfer/session-key transactions
+- multisig transfer/update approval signing
+- deterministic owner-sorted multisig signature ordering
 
 ## Install
 
@@ -61,6 +66,49 @@ await factory.write('createFlowableNanoToken', [
   18,
   1_000_000n * 10n ** 18n,
 ])
+
+// direct session key tx
+await nano.sessionKeys.setDirect({
+  walletClient,
+  sessionKey: '0xSessionKey',
+  enabled: true,
+})
+
+// sign + relay session key update
+const sessionSig = await nano.sessionKeys.signWithSig({
+  walletClient,
+  account: account.address,
+  sessionKey: '0xSessionKey',
+  enabled: true,
+})
+await nano.sessionKeys.submitWithSig({
+  relayerAccount: account,
+  account: account.address,
+  sessionKey: '0xSessionKey',
+  enabled: true,
+  deadline: sessionSig.deadline,
+  signature: sessionSig.signature,
+})
+
+// sign + relay transferWithSig
+const transferSig = await nano.signatures.signTransferWithSig({
+  walletClient,
+  from: account.address,
+  to: '0xRecipient',
+  amount: 10n * 10n ** 18n,
+  objectId: 1n,
+  objectData: '0x',
+})
+await nano.signatures.submitTransferWithSig({
+  relayerAccount: account,
+  from: account.address,
+  to: '0xRecipient',
+  amount: 10n * 10n ** 18n,
+  objectId: 1n,
+  objectData: '0x',
+  deadline: transferSig.deadline,
+  signature: transferSig.signature,
+})
 ```
 
 ## API
@@ -83,6 +131,38 @@ Contract creators:
 - `createNanoTokenWrapperSdk`
 
 Raw ABIs are also exported from `src/index.js`.
+
+## Signature & Multisig Helpers
+
+Helpers are exported both:
+
+- directly from `src/index.js`, and
+- under `nano.sessionKeys` / `nano.signatures` for `NanoToken` and `FlowableNanoToken` SDKs.
+
+Session key helpers:
+
+- `setSessionKeyDirect`
+- `signSetSessionKeyWithSig`
+- `submitSetSessionKeyWithSig`
+
+Transfer-with-signature helpers:
+
+- `signTransferWithSig`
+- `submitTransferWithSig`
+
+Multisig helpers:
+
+- `signMultiSigTransferApproval`
+- `submitMultiSigTransfer`
+- `signMultiSigUpdateApproval`
+- `submitMultiSigUpdate`
+- `orderSignaturesByOwner`
+- `signaturesFromOrderedApprovals`
+
+Important:
+
+- `NanoToken` requires multisig signatures ordered by resolved owner address.
+- Use `orderSignaturesByOwner([...])` before submit to enforce deterministic ordering and avoid contract reverts.
 
 ## Regenerate ABIs after contract changes
 

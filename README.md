@@ -1,264 +1,200 @@
-# NanoToken
+# Nano Token Protocol
+
+This repository contains a token protocol centered on `NanoToken` and `FlowableNanoToken`, plus deployment factories, a shared wrapper, and a `viem` JavaScript SDK.
+
+## Contracts
+
+Source files are in `/Users/jiang/london/nano_token/src`.
+
+### 1) `NanoToken.sol`
+
+An extended ERC-20 with:
+
+- configurable constructor parameters:
+  - `admin`
+  - `name`
+  - `symbol`
+  - `decimals`
+  - `initialSupply`
+- max supply control:
+  - `maxSupply` initialized at deployment
+  - owner can adjust via `setMaxSupply`
+  - minting cannot exceed `maxSupply`
+- delegated minters with credit budget:
+  - owner sets credit via `setMinterCredit`
+  - minter mints via `mint`
+  - credit decreases on mint
+- blacklist controls:
+  - owner-managed `setBlacklist`
+  - blocked addresses cannot send or receive
+- conditional whitelist mode:
+  - owner-managed `setWhitelist`
+  - when whitelist is non-empty, restricted senders can only send to whitelisted recipients or burn
+  - owner, whitelisted senders, and `address(this)` are exempt
+- data-carrying transfers:
+  - `transferWithData`
+  - `batchTransferWithData`
+- session keys:
+  - direct set via `setSessionKey`
+  - relayed signed set via `setSessionKeyWithSig` (EIP-712 + nonce + deadline)
+- gasless signed transfer:
+  - `transferWithSig` (user signature or active session key signature)
+- session delegated transfer:
+  - `transferFromSession`
+  - `batchTransferFromSession`
+- counter-based multisig accounts:
+  - create via `createMultiSigAccount(owners, threshold)`
+  - account address: `address(uint160(accountId))`
+  - transfer via `transferFromMultiSig` (threshold signatures)
+  - update owners/threshold via `updateMultiSigAccount` (threshold signatures)
+  - multisig signatures must be ordered by resolved owner address
+- admin recovery:
+  - `recoverAccount(oldAccount, newAccount)` moves full balance
+
+### 2) `FlowableNanoToken.sol`
+
+Inherits `NanoToken` and adds Flow-style streaming payments.
+
+Flow features:
+
+- create: `createFlow`
+- fund: `depositFlow`
+- recipient withdraw: `withdrawFlow`, `withdrawMaxFlow`
+- sender refund (unstreamed balance): `refundFlow`
+- pause/resume by sender: `pauseFlow`, `resumeFlow`
+- void by sender or recipient: `voidFlow`
+- debt views:
+  - `flowTotalDebt`
+  - `flowCoveredDebt`
+  - `flowUncoveredDebt`
+  - `flowWithdrawableAmount`
+  - `flowRefundableAmount`
 
-`NanoToken` is an ERC-20 token built with Foundry and OpenZeppelin, extended with:
+### 3) `NanoTokenFactory.sol`
+
+Deploys configurable `NanoToken` instances:
 
-- role-based compliance controls (`blacklist`, conditional `whitelist`)
-- data-carrying transfers
-- gasless EIP-712 signed transfers
-- user session keys for delegated actions
-- counter-based multisig accounts with threshold signatures
-- admin recovery flow for compromised accounts
-- capped supply with credit-based delegated minters
+- `createNanoToken(admin, name, symbol, decimals, initialSupply)`
 
-## Stack
+Registry tracking:
 
-- Solidity `^0.8.20`
-- Foundry (Forge)
-- OpenZeppelin Contracts `v5.5.0`
+- `isNanoTokenFromFactory[token]`
+- `allNanoTokens[]`
+- `totalNanoTokens()`
 
-## Contract Overview
+### 4) `FlowableNanoTokenFactory.sol`
 
-Primary contract: `src/NanoToken.sol`
+Deploys configurable `FlowableNanoToken` instances:
 
-Inheritance:
+- `createFlowableNanoToken(admin, name, symbol, decimals, initialSupply)`
 
-- `ERC20`
-- `ERC20Burnable`
-- `Ownable`
-- `EIP712`
+Registry tracking:
 
-Token metadata:
+- `isFlowableNanoTokenFromFactory[token]`
+- `allFlowableNanoTokens[]`
+- `totalFlowableNanoTokens()`
 
-- Name: `Nano Token`
-- Symbol: `NANO`
+### 5) `NanoTokenWrapper.sol`
 
-## Supply Model
+A shared wrapper for many NanoToken pairs.
 
-### Initial Supply
+Use case:
 
-- The constructor mints `initialSupply` to the deployer (`owner`).
-- `maxSupply` is initialized to `initialSupply`.
+- wrapper accepts an external ERC-20 (underlying)
+- wrapper mints corresponding `NanoToken`
+- wrapper burns `NanoToken` and returns underlying ERC-20
 
-### Max Supply
+Functions:
 
-- `maxSupply` is a hard cap enforced on all post-deployment minting.
-- Owner can adjust cap via `setMaxSupply(uint256 newMaxSupply)`.
-- Guardrail: `newMaxSupply` cannot be below current `totalSupply()`.
+- owner configures pair: `setPair(nanoToken, underlying)`
+- wrap: `wrap(nanoToken, amount, to)`
+- unwrap: `unwrap(nanoToken, amount, to)`
 
-### Delegated Minters with Credit
+Notes:
 
-- Owner assigns credit: `setMinterCredit(address minter, uint256 credit)`.
-- Minter uses `mint(address to, uint256 amount)`.
-- Minting rules:
-  - caller must have enough `minterCredits`
-  - resulting `totalSupply()` must be `<= maxSupply`
-  - credit is decremented by minted amount
+- wrapper is reusable across multiple NanoToken contracts
+- wrapper must be granted minter credit on each NanoToken it wraps
+- unwrap requires user approval for `burnFrom` amount
 
-Design choice:
+## SDK (`viem`)
 
-- Runtime owner minting was removed to force deterministic delegated issuance with explicit credit budgets.
+SDK lives in `/Users/jiang/london/nano_token/sdk`.
 
-## Transfer and Policy Controls
+### Exposed contract SDK creators
 
-### Blacklist
+- `createNanoTokenSdk`
+- `createFlowableNanoTokenSdk`
+- `createNanoTokenFactorySdk`
+- `createFlowableNanoTokenFactorySdk`
+- `createNanoTokenWrapperSdk`
 
-- Owner sets blacklist via `setBlacklist(address account, bool isBlacklisted)`.
-- If `from` or `to` is blacklisted, transfer reverts.
+Each contract SDK supports generic calls to all functions:
 
-### Whitelist (Conditional Transfer Mode)
+- `read(functionName, args?, options?)`
+- `simulate(functionName, args?, options?)`
+- `write(functionName, args?, options?)`
+- `estimateGas(functionName, args?, options?)`
+- `watchEvent(eventName, options?)`
 
-- Owner sets whitelist via `setWhitelist(address account, bool isWhitelisted)`.
-- `whitelistCount` tracks whether whitelist mode is active.
-- When `whitelistCount == 0`: normal transfers.
-- When `whitelistCount > 0`:
-  - owner and whitelisted senders can transfer freely
-  - other senders can only:
-    - transfer to whitelisted recipients, or
-    - burn (`to == address(0)`)
+### Advanced signature helpers
 
-Design choice:
+The SDK includes high-level helpers for EIP-712 and multisig:
 
-- Whitelist is optional and activates only when non-empty, allowing normal operation by default.
+- session key helpers:
+  - `setSessionKeyDirect`
+  - `signSetSessionKeyWithSig`
+  - `submitSetSessionKeyWithSig`
+- transfer signature helpers:
+  - `signTransferWithSig`
+  - `submitTransferWithSig`
+- multisig helpers:
+  - `signMultiSigTransferApproval`
+  - `submitMultiSigTransfer`
+  - `signMultiSigUpdateApproval`
+  - `submitMultiSigUpdate`
+  - `computeOwnersHash`
+- ordering utilities:
+  - `orderSignaturesByOwner`
+  - `signaturesFromOrderedApprovals`
 
-## Data-Carrying Transfers
+Important:
 
-### Single Transfer
+- multisig approvals must be submitted in owner-address ascending order (resolved owners)
+- use `orderSignaturesByOwner` before submit to avoid reverts
 
-`transferWithData(address to, uint256 amount, uint256 objectId, bytes objectData)`
+## Testing
 
-- Performs token transfer
-- Emits `TransferWithData(from, to, amount, objectId, objectData)`
+Tests are in `/Users/jiang/london/nano_token/test`.
 
-### Batch Transfer
+Current suites:
 
-`batchTransferWithData(address[] to, uint256[] amount, uint256[] objectId, bytes[] objectData)`
+- `NanoToken.t.sol`
+- `FlowableNanoToken.t.sol`
+- `NanoTokenWrapper.t.sol`
 
-- Executes multiple transfers in one transaction
-- Length mismatch across arrays reverts with `ArrayLengthMismatch()`
-
-Design choice:
-
-- `objectId` + `objectData` supports off-chain indexing and protocol metadata without changing ERC-20 storage model.
-
-## Session Keys
-
-Users can delegate permissions to ephemeral keys.
-
-### Direct Session Key Management
-
-`setSessionKey(address sessionKey, bool enabled)`
-
-- User-owned mapping: `sessionKeys[user][sessionKey]`
-
-### Signature-Based Session Key Management
-
-`setSessionKeyWithSig(address account, address sessionKey, bool enabled, uint256 deadline, bytes signature)`
-
-- EIP-712 signed by `account`
-- Replay-protected via `sessionKeyNonces[account]`
-
-### Delegated Session Transfers
-
-- `transferFromSession(...)`
-- `batchTransferFromSession(...)`
-
-Both require `sessionKeys[from][msg.sender] == true`.
-
-Design choice:
-
-- Session keys are per-user and revocable; they are also accepted in multisig approvals.
-
-## Gasless Signed Transfers
-
-`transferWithSig(address from, address to, uint256 amount, uint256 objectId, bytes objectData, uint256 deadline, bytes signature)`
-
-- Anyone can relay the tx and pay gas
-- Signature signer can be:
-  - `from`, or
-  - an enabled session key of `from`
-- Replay-protected via `nonces[from]`
-- Emits `TransferWithData`
-
-Design choice:
-
-- Single `bytes signature` API avoids stack-depth pressure and aligns with common relayer workflows.
-
-## Counter-Based Multisig Accounts
-
-Multisig accounts are represented by incremental `uint256` IDs.
-
-### Account Identity
-
-- New account ID from `nextMultiSigAccountId`.
-- Account address is deterministic: `address(uint160(accountId))`.
-
-### Create
-
-`createMultiSigAccount(address[] owners, uint256 threshold)`
-
-- Validates owners/threshold
-- Stores owner set and threshold
-
-### Transfer with Threshold Signatures
-
-`transferFromMultiSig(uint256 accountId, address to, uint256 amount, uint256 objectId, bytes objectData, uint256 deadline, bytes[] signatures)`
-
-- EIP-712 digest over transfer payload + nonce + deadline
-- Nonce: `multiSigNonces[accountId]`
-- Requires threshold valid approvals
-
-### Update Owners/Threshold via Multisig
-
-`updateMultiSigAccount(uint256 accountId, address[] newOwners, uint256 newThreshold, uint256 deadline, bytes[] signatures)`
-
-- Also threshold-authorized and nonce-protected
-- Replaces owner set and threshold atomically
-
-### Signature Validation Semantics
-
-- Signers resolve to canonical owners:
-  - direct owner signature, or
-  - session key signature mapped to its owner
-- Approvals must be **strictly increasing by resolved owner address**.
-- Duplicate, unsorted, or invalid approvals revert with `MultiSigInvalidSignatures()`.
-
-Design choice:
-
-- Ordered signatures enforce uniqueness deterministically and avoid O(n^2) duplicate scans.
-
-## Account Recovery
-
-`recoverAccount(address oldAccount, address newAccount)` (`onlyOwner`)
-
-- Moves full balance from `oldAccount` to `newAccount`
-- Emits `AccountRecovered`
-- Returns moved amount
-
-Important behavior:
-
-- Recovery bypasses blacklist/whitelist transfer restrictions during execution to guarantee recoverability.
-
-Design choice:
-
-- Explicit admin recovery was prioritized for operational safety in compromised-account scenarios.
-
-## Security and Replay Protections
-
-- EIP-712 domain: `("Nano Token", "1", chainId, verifyingContract)`
-- Independent nonce spaces:
-  - `nonces[user]` for token transfer signatures
-  - `sessionKeyNonces[user]` for session key management signatures
-  - `multiSigNonces[accountId]` for multisig actions
-- Deadlines enforced on all signed actions
-
-## Key Events and Errors
-
-Notable events:
-
-- `TransferWithData`
-- `SessionKeyUpdated`
-- `AccountRecovered`
-- `MultiSigAccountCreated`, `MultiSigAccountUpdated`
-- `MinterCreditUpdated`, `MinterMinted`
-- `MaxSupplyUpdated`
-
-Notable custom errors:
-
-- `BlacklistedAddress`
-- `WhitelistRestrictedTransfer`
-- `ExpiredSignature`
-- `InvalidSignature`
-- `UnauthorizedSessionKey`
-- `ArrayLengthMismatch`
-- `InvalidThreshold`
-- `MultiSigAccountNotFound`
-- `MultiSigInvalidSignatures`
-- `InsufficientMinterCredit`
-- `MaxSupplyExceeded`
-- `InvalidMaxSupply`
-
-## Development
-
-### Build
-
-```bash
-forge build
-```
-
-### Test
+Run tests:
 
 ```bash
 forge test
 ```
 
-### Format
+## Build
 
 ```bash
-forge fmt
+forge build
 ```
 
-## Notes and Tradeoffs
+## SDK Install
 
-- Multisig account addresses are synthetic (`address(uint160(id))`), not deployed smart contract wallets.
-- This keeps execution and state centralized in `NanoToken`, reducing integration complexity but making the token contract the single trust/logic anchor.
-- Recovery and policy controls are intentionally admin-strong; governance/role decentralization is out of scope for this version.
+```bash
+cd sdk
+npm install
+```
+
+## SDK ABI Refresh
+
+After contract ABI changes:
+
+```bash
+npm --prefix sdk run update-abis
+```
