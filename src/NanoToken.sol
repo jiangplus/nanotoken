@@ -15,6 +15,13 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable {
 
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
+    event TransferWithData(
+        address indexed from,
+        address indexed to,
+        uint256 amount,
+        uint256 objectId,
+        bytes objectData
+    );
 
     constructor(uint256 initialSupply) ERC20("Nano Token", "NANO") Ownable(msg.sender) {
         _mint(msg.sender, initialSupply);
@@ -38,6 +45,17 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable {
             whitelistCount -= 1;
         }
         emit WhitelistUpdated(account, isWhitelisted);
+    }
+
+    function transferWithData(
+        address to,
+        uint256 amount,
+        uint256 objectId,
+        bytes calldata objectData
+    ) external returns (bool) {
+        _transfer(msg.sender, to, amount);
+        emit TransferWithData(msg.sender, to, amount, objectId, objectData);
+        return true;
     }
 
     function _update(address from, address to, uint256 value) internal virtual override {

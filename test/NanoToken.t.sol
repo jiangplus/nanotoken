@@ -5,6 +5,14 @@ import {Test} from "forge-std/Test.sol";
 import {NanoToken} from "src/NanoToken.sol";
 
 contract NanoTokenTest is Test {
+    event TransferWithData(
+        address indexed from,
+        address indexed to,
+        uint256 amount,
+        uint256 objectId,
+        bytes objectData
+    );
+
     NanoToken internal token;
     address internal user = address(0xBEEF);
     address internal recipient = address(0xCAFE);
@@ -26,6 +34,19 @@ contract NanoTokenTest is Test {
     function testTransfer() public {
         token.transfer(recipient, 100 ether);
 
+        assertEq(token.balanceOf(recipient), 100 ether);
+        assertEq(token.balanceOf(address(this)), 999_900 ether);
+    }
+
+    function testTransferWithData() public {
+        bytes memory objectData = hex"1234abcd";
+
+        vm.expectEmit(true, true, false, true);
+        emit TransferWithData(address(this), recipient, 100 ether, 42, objectData);
+
+        bool ok = token.transferWithData(recipient, 100 ether, 42, objectData);
+
+        assertTrue(ok);
         assertEq(token.balanceOf(recipient), 100 ether);
         assertEq(token.balanceOf(address(this)), 999_900 ether);
     }
