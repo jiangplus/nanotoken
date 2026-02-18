@@ -1,0 +1,17 @@
+{
+  "name": "nano-token-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "check": "node -e \"import('./src/index.js').then(() => console.log('ok'))\"",
+    "update-abis": "bash ./scripts/update-abis.sh"
+  },
+  "dependencies": {
+    "viem": "^2.38.4"
+  }
+}
