@@ -5,6 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {NanoToken} from "src/NanoToken.sol";
 
 contract NanoTokenTest is Test {
+    bytes32 internal constant TRANSFER_WITH_SIG_TYPEHASH =
+        keccak256(
+            "TransferWithSig(address from,address to,uint256 amount,uint256 objectId,bytes objectData,uint256 nonce,uint256 deadline)"
+        );
+
     event TransferWithData(
         address indexed from,
         address indexed to,
@@ -17,9 +22,13 @@ contract NanoTokenTest is Test {
     address internal user = address(0xBEEF);
     address internal recipient = address(0xCAFE);
     address internal allowedRecipient = address(0xABCD);
+    uint256 internal signerPk;
+    address internal signer;
 
     function setUp() public {
         token = new NanoToken(1_000_000 ether);
+        signerPk = 0xA11CE;
+        signer = vm.addr(signerPk);
     }
 
     function testInitialSupplyMintedToDeployer() public view {
@@ -49,6 +58,54 @@ contract NanoTokenTest is Test {
         assertTrue(ok);
         assertEq(token.balanceOf(recipient), 100 ether);
         assertEq(token.balanceOf(address(this)), 999_900 ether);
+    }
+
+    function testTransferWithSig() public {
+        token.transfer(signer, 100 ether);
+        bytes memory objectData = hex"beef";
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.nonces(signer);
+        bytes32 digest =
+            _transferWithSigDigest(signer, recipient, 10 ether, 7, objectData, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+
+        bool ok = token.transferWithSig(
+            signer, recipient, 10 ether, 7, objectData, deadline, v, r, s
+        );
+
+        assertTrue(ok);
+        assertEq(token.balanceOf(signer), 90 ether);
+        assertEq(token.balanceOf(recipient), 10 ether);
+        assertEq(token.nonces(signer), nonce + 1);
+    }
+
+    function testTransferWithSigRejectsReplay() public {
+        token.transfer(signer, 100 ether);
+        bytes memory objectData = hex"beef";
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = token.nonces(signer);
+        bytes32 digest =
+            _transferWithSigDigest(signer, recipient, 10 ether, 7, objectData, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+
+        token.transferWithSig(signer, recipient, 10 ether, 7, objectData, deadline, v, r, s);
+
+        vm.expectRevert(NanoToken.InvalidSignature.selector);
+        token.transferWithSig(signer, recipient, 10 ether, 7, objectData, deadline, v, r, s);
+    }
+
+    function testTransferWithSigRejectsExpiredSignature() public {
+        token.transfer(signer, 100 ether);
+        bytes memory objectData = hex"beef";
+        uint256 deadline = block.timestamp + 1;
+        uint256 nonce = token.nonces(signer);
+        bytes32 digest =
+            _transferWithSigDigest(signer, recipient, 10 ether, 7, objectData, nonce, deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        vm.warp(deadline + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(NanoToken.ExpiredSignature.selector, deadline));
+        token.transferWithSig(signer, recipient, 10 ether, 7, objectData, deadline, v, r, s);
     }
 
     function testOwnerCanSetAndUnsetBlacklist() public {
@@ -153,5 +210,42 @@ contract NanoTokenTest is Test {
         vm.prank(user);
         token.transfer(recipient, 1 ether);
         assertEq(token.balanceOf(recipient), 1 ether);
+    }
+
+    function _transferWithSigDigest(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 objectId,
+        bytes memory objectData,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                TRANSFER_WITH_SIG_TYPEHASH,
+                from,
+                to,
+                amount,
+                objectId,
+                keccak256(objectData),
+                nonce,
+                deadline
+            )
+        );
+
+        bytes32 domainSeparator = keccak256(
+            abi.encode(
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
+                keccak256(bytes("Nano Token")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(token)
+            )
+        );
+
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
     }
 }
