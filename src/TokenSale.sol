@@ -16,12 +16,15 @@ contract TokenSale is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     mapping(address => address) public underlyingOf;
+    mapping(address => uint256) public underlyingPerNanoTokenE18;
 
     error InvalidPair(address nanoToken, address underlying);
     error PairNotConfigured(address nanoToken);
     error UnauthorizedNanoAdmin(address nanoToken, address expectedAdmin, address caller);
+    error InvalidExchangeRate(address nanoToken, uint256 rate);
 
     event PairConfigured(address indexed nanoToken, address indexed underlying);
+    event ExchangeRateUpdated(address indexed nanoToken, uint256 underlyingPerNanoTokenE18);
     event Purchased(
         address indexed nanoToken,
         address indexed underlying,
@@ -58,14 +61,31 @@ contract TokenSale is Ownable, ReentrancyGuard {
         }
 
         underlyingOf[nanoToken] = underlying;
+        if (underlyingPerNanoTokenE18[nanoToken] == 0) {
+            underlyingPerNanoTokenE18[nanoToken] = 1e18;
+            emit ExchangeRateUpdated(nanoToken, 1e18);
+        }
         emit PairConfigured(nanoToken, underlying);
+    }
+
+    function setExchangeRate(address nanoToken, uint256 rate) external {
+        _requirePair(nanoToken);
+        _requireNanoAdmin(nanoToken, msg.sender);
+        if (rate == 0) {
+            revert InvalidExchangeRate(nanoToken, rate);
+        }
+
+        underlyingPerNanoTokenE18[nanoToken] = rate;
+        emit ExchangeRateUpdated(nanoToken, rate);
     }
 
     function buy(address nanoToken, uint256 amount, address to) external nonReentrant returns (bool) {
         address underlying = _requirePair(nanoToken);
+        uint256 rate = underlyingPerNanoTokenE18[nanoToken];
+        uint256 nanoOut = (amount * 1e18) / rate;
 
         IERC20(underlying).safeTransferFrom(msg.sender, address(this), amount);
-        INanoMintBurnOwnable(nanoToken).mint(to, amount);
+        INanoMintBurnOwnable(nanoToken).mint(to, nanoOut);
 
         emit Purchased(nanoToken, underlying, msg.sender, to, amount);
         return true;
@@ -73,11 +93,13 @@ contract TokenSale is Ownable, ReentrancyGuard {
 
     function sell(address nanoToken, uint256 amount, address to) external nonReentrant returns (bool) {
         address underlying = _requirePair(nanoToken);
+        uint256 rate = underlyingPerNanoTokenE18[nanoToken];
+        uint256 underlyingOut = (amount * rate) / 1e18;
 
         INanoMintBurnOwnable(nanoToken).burnFrom(msg.sender, amount);
-        IERC20(underlying).safeTransfer(to, amount);
+        IERC20(underlying).safeTransfer(to, underlyingOut);
 
-        emit Sold(nanoToken, underlying, msg.sender, to, amount);
+        emit Sold(nanoToken, underlying, msg.sender, to, underlyingOut);
         return true;
     }
 

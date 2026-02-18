@@ -99,4 +99,43 @@ contract TokenSaleTest is Test {
         sale.withdrawUnderlying(address(nano), 1 ether, user);
         vm.stopPrank();
     }
+
+    function testNanoAdminCanSetExchangeRate() public {
+        vm.prank(nanoAdmin);
+        sale.setExchangeRate(address(nano), 2e18);
+        assertEq(sale.underlyingPerNanoTokenE18(address(nano)), 2e18);
+    }
+
+    function testNonAdminCannotSetExchangeRate() public {
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TokenSale.UnauthorizedNanoAdmin.selector,
+                address(nano),
+                nanoAdmin,
+                user
+            )
+        );
+        sale.setExchangeRate(address(nano), 2e18);
+    }
+
+    function testBuySellWithCustomExchangeRate() public {
+        vm.prank(nanoAdmin);
+        sale.setExchangeRate(address(nano), 2e18); // 1 nano = 2 underlying
+
+        vm.startPrank(user);
+        usdc.approve(address(sale), 100 ether);
+        sale.buy(address(nano), 100 ether, user);
+        // 100 underlying => 50 nano at rate 2
+        assertEq(nano.balanceOf(user), 50 ether);
+        assertEq(usdc.balanceOf(address(sale)), 100 ether);
+
+        nano.approve(address(sale), 20 ether);
+        sale.sell(address(nano), 20 ether, user);
+        // 20 nano => 40 underlying
+        assertEq(nano.balanceOf(user), 30 ether);
+        assertEq(usdc.balanceOf(user), 940 ether);
+        assertEq(usdc.balanceOf(address(sale)), 60 ether);
+        vm.stopPrank();
+    }
 }
