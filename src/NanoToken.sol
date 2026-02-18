@@ -398,17 +398,17 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         }
 
         address[] storage owners = multiSigOwnerList[accountId];
-        address[] memory approvedOwners = new address[](owners.length);
         uint256 approvedCount;
+        address lastOwner;
 
         for (uint256 i = 0; i < signatures.length; i++) {
             address signer = ECDSA.recover(digest, signatures[i]);
             address owner = _resolveMultiSigOwner(accountId, signer, owners);
-            if (owner == address(0) || _containsOwner(approvedOwners, approvedCount, owner)) {
-                continue;
+            if (owner == address(0) || owner <= lastOwner) {
+                revert MultiSigInvalidSignatures();
             }
 
-            approvedOwners[approvedCount] = owner;
+            lastOwner = owner;
             approvedCount += 1;
             if (approvedCount >= threshold) {
                 return;
@@ -436,12 +436,4 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         return address(0);
     }
 
-    function _containsOwner(address[] memory owners, uint256 length, address owner) internal pure returns (bool) {
-        for (uint256 i = 0; i < length; i++) {
-            if (owners[i] == owner) {
-                return true;
-            }
-        }
-        return false;
-    }
 }
