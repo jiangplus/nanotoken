@@ -36,6 +36,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     mapping(uint256 => uint256) public multiSigThreshold;
     mapping(uint256 => uint256) public multiSigNonces;
     uint256 public nextMultiSigAccountId;
+    uint256 public maxSupply;
     uint256 public whitelistCount;
     bool private recoveryTransferActive;
 
@@ -49,12 +50,15 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     error MultiSigAccountNotFound(uint256 accountId);
     error MultiSigInvalidSignatures();
     error InsufficientMinterCredit(address minter, uint256 available, uint256 requested);
+    error MaxSupplyExceeded(uint256 maxSupply, uint256 requestedTotalSupply);
+    error InvalidMaxSupply(uint256 maxSupply, uint256 currentSupply);
 
     event BlacklistUpdated(address indexed account, bool isBlacklisted);
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
     event SessionKeyUpdated(address indexed account, address indexed sessionKey, bool enabled);
     event MinterCreditUpdated(address indexed minter, uint256 credit);
     event MinterMinted(address indexed minter, address indexed to, uint256 amount);
+    event MaxSupplyUpdated(uint256 maxSupply);
     event AccountRecovered(address indexed oldAccount, address indexed newAccount, uint256 amount);
     event MultiSigAccountCreated(uint256 indexed accountId, uint256 threshold);
     event MultiSigAccountUpdated(uint256 indexed accountId, uint256 threshold);
@@ -67,6 +71,7 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
     );
 
     constructor(uint256 initialSupply) ERC20("Nano Token", "NANO") Ownable(msg.sender) EIP712("Nano Token", "1") {
+        maxSupply = initialSupply;
         _mint(msg.sender, initialSupply);
         nextMultiSigAccountId = 1;
     }
@@ -96,19 +101,28 @@ contract NanoToken is ERC20, ERC20Burnable, Ownable, EIP712 {
         emit SessionKeyUpdated(msg.sender, sessionKey, enabled);
     }
 
-    function mint(address to, uint256 amount) external onlyOwner {
-        _mint(to, amount);
-    }
-
     function setMinterCredit(address minter, uint256 credit) external onlyOwner {
         minterCredits[minter] = credit;
         emit MinterCreditUpdated(minter, credit);
     }
 
-    function mintByMinter(address to, uint256 amount) external returns (bool) {
+    function setMaxSupply(uint256 newMaxSupply) external onlyOwner {
+        uint256 supply = totalSupply();
+        if (newMaxSupply < supply) {
+            revert InvalidMaxSupply(newMaxSupply, supply);
+        }
+        maxSupply = newMaxSupply;
+        emit MaxSupplyUpdated(newMaxSupply);
+    }
+
+    function mint(address to, uint256 amount) external returns (bool) {
         uint256 credit = minterCredits[msg.sender];
         if (credit < amount) {
             revert InsufficientMinterCredit(msg.sender, credit, amount);
+        }
+        uint256 newSupply = totalSupply() + amount;
+        if (newSupply > maxSupply) {
+            revert MaxSupplyExceeded(maxSupply, newSupply);
         }
 
         minterCredits[msg.sender] = credit - amount;
